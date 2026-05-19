@@ -1,28 +1,16 @@
 import streamlit as st
-import anthropic
-import json
 import pandas as pd
+import time
+import random
 
 # --- Page Configuration ---
 st.set_page_config(page_title="MedAI Diagnostic System", page_icon="⚕️", layout="wide")
 
-# --- Constants & Clinical Data ---
-SYSTEM_PROMPT = """You are MedAI, a clinical-grade AI diagnostic assistant. You analyze patient symptoms and medical metrics with precision.
-When given symptoms or metrics, you must respond with a JSON object ONLY (no markdown formatting outside the JSON block).
-Schema:
-{
-  "primaryDiagnosis": { "name": "Disease Name", "icdCode": "ICD-10 Code", "confidence": 0-100, "severity": "low|moderate|high|critical", "category": "category" },
-  "differentialDiagnoses": [ { "name": "Condition", "probability": 0-100, "notes": "brief clinical reason" } ],
-  "riskFactors": ["factor1", "factor2"],
-  "recommendedTests": [ { "test": "Test Name", "priority": "urgent|routine|optional", "reason": "why" } ],
-  "clinicalSummary": "2-3 sentence clinical summary",
-  "immediateActions": ["action1", "action2"],
-  "prognosis": "Brief prognosis statement",
-  "specialistReferral": "Which specialist and urgency level",
-  "redFlags": ["warning sign 1", "warning sign 2"],
-  "disclaimer": "This AI analysis is for educational purposes only and must not replace professional medical diagnosis."
-}"""
+# --- State Management for Past Patients ---
+if "patient_history" not in st.session_state:
+    st.session_state.patient_history = []
 
+# --- Constants & Clinical Data ---
 SYMPTOM_CATEGORIES = {
     "Cardiovascular": ["chest pain", "palpitations", "shortness of breath", "leg swelling", "dizziness", "syncope"],
     "Respiratory": ["cough", "wheezing", "hemoptysis", "pleuritic pain", "dyspnea", "sputum production"],
@@ -40,17 +28,26 @@ VITAL_RANGES = {
     "Respiratory Rate (/min)": {"min": 8, "max": 40, "normal": [12, 20], "default": 16}
 }
 
-# --- Sidebar configuration ---
+# --- Sidebar: Past Patients Dashboard ---
 with st.sidebar:
-    st.header("⚙️ System Configuration")
-    api_key = st.text_input("Anthropic API Key", type="password", help="Enter your Claude API key to power the diagnostic engine.")
+    st.header("🗂️ Past Patients Diagnosis")
     st.markdown("---")
-    st.markdown("**Model Engine:** Claude 3.5 Sonnet\n\n**Mode:** Clinical Triage & Assessment")
+    
+    if not st.session_state.patient_history:
+        st.info("No past patient records found in this session.")
+    else:
+        for i, record in enumerate(reversed(st.session_state.patient_history)):
+            with st.expander(f"Patient {len(st.session_state.patient_history) - i}: {record['diagnosis']}", expanded=(i==0)):
+                st.markdown(f"**Severity:** {record['severity'].upper()}")
+                st.markdown(f"**Demographics:** {record['age']} yrs | {record['sex']}")
+                st.markdown(f"**Symptoms:** {', '.join(record['symptoms']) if record['symptoms'] else 'None'}")
+                st.markdown(f"**Confidence:** {record['confidence']}%")
+                st.caption(f"Time: {record['time']}")
 
+# --- Main Interface ---
 st.title("⚕️ MedAI Diagnostic Assessment System")
 st.markdown("Enter patient metrics below to generate a highly technical differential diagnosis matrix.")
 
-# --- UI Layout (Tabs) ---
 tab_symp, tab_vitals, tab_patient = st.tabs(["🦠 Symptoms", "🫀 Vital Signs", "📋 Patient Profile"])
 
 selected_symptoms = []
@@ -89,103 +86,104 @@ with tab_patient:
         age = st.number_input("Age", min_value=1, max_value=120, value=35)
     with p_col2:
         sex = st.selectbox("Biological Sex", ["Male", "Female", "Other"])
-    notes = st.text_area("Clinical Notes / Past Medical History", height=150, placeholder="e.g., known diabetic, recent travel, current medications...")
+    notes = st.text_area("Clinical Notes / Past Medical History", height=150, placeholder="e.g., known diabetic, recent travel...")
 
-# --- Engine Logic ---
+# --- Mock Engine Logic ---
+def generate_mock_data(symptoms, vitals):
+    # Determines severity based on basic input heuristics
+    is_critical = vitals["Heart Rate (bpm)"] > 130 or vitals["O2 Saturation (%)"] < 90 or "chest pain" in symptoms
+    is_moderate = len(symptoms) > 2 or vitals["Temperature (°C)"] > 38.5
+    
+    if is_critical:
+        primary = "Acute Cardiopulmonary Distress"
+        severity = "critical"
+        confidence = random.randint(85, 95)
+        icd = "R07.4"
+        actions = ["Immediate ER transfer", "Start supplemental oxygen", "Continuous ECG monitoring"]
+    elif is_moderate:
+        primary = "Acute Viral Infection / Inflammation"
+        severity = "moderate"
+        confidence = random.randint(75, 88)
+        icd = "B97.89"
+        actions = ["Schedule outpatient lab work", "Prescribe antipyretics", "Monitor vitals every 4 hours"]
+    else:
+        primary = "Idiopathic Mild Syndrome"
+        severity = "low"
+        confidence = random.randint(60, 80)
+        icd = "R68.89"
+        actions = ["Discharge with instructions", "Rest and hydration"]
+
+    return {
+        "primaryDiagnosis": {"name": primary, "icdCode": icd, "confidence": confidence, "severity": severity, "category": "General"},
+        "differentialDiagnoses": [
+            {"name": "Secondary Bacterial Pathogen", "probability": confidence - 15, "notes": "Rule out via cultures"},
+            {"name": "Stress-Induced Somatization", "probability": confidence - 35, "notes": "Diagnosis of exclusion"}
+        ],
+        "riskFactors": ["Age-related factors", "Recent exposure risks"],
+        "recommendedTests": [
+            {"test": "Complete Blood Count (CBC)", "priority": "urgent" if is_critical else "routine", "reason": "Baseline infectious markers"},
+            {"test": "Comprehensive Metabolic Panel", "priority": "routine", "reason": "Organ function review"}
+        ],
+        "clinicalSummary": f"Patient presents with {len(symptoms)} reported symptoms and variations in resting vitals requiring assessment.",
+        "immediateActions": actions,
+        "prognosis": "Favorable with immediate compliance to the recommended medical pathway.",
+        "specialistReferral": "Cardiology" if is_critical else "General Medicine",
+        "redFlags": ["Abnormal vital ranges detected"] if is_critical or is_moderate else ["None observed"],
+        "disclaimer": "This AI analysis is a localized mock demonstration for educational purposes only."
+    }
+
+# --- Execution UI ---
 st.markdown("---")
 if st.button("▶ Run AI Diagnostic Matrix", type="primary", use_container_width=True):
-    if not api_key:
-        st.error("⚠️ Please enter your Anthropic API Key in the sidebar to run the analysis.")
-        st.stop()
-        
     if not selected_symptoms and not notes:
         st.warning("Please enter at least one symptom or clinical note to proceed.")
         st.stop()
 
-    # 1. Flag Abnormal Vitals
-    abnormal_vitals = []
-    for label, val in vital_inputs.items():
-        normal = VITAL_RANGES[label]["normal"]
-        if val < normal[0] or val > normal[1]:
-            abnormal_vitals.append(f"{label}: {val} (Abnormal)")
+    with st.spinner("Analyzing patient vector data via Localized Neural Mock Engine..."):
+        time.sleep(2) # Simulates processing time
+        
+        data = generate_mock_data(selected_symptoms, vital_inputs)
+        
+        # Save to History
+        import datetime
+        st.session_state.patient_history.append({
+            "time": datetime.datetime.now().strftime("%H:%M:%S"),
+            "diagnosis": data["primaryDiagnosis"]["name"],
+            "severity": data["primaryDiagnosis"]["severity"],
+            "confidence": data["primaryDiagnosis"]["confidence"],
+            "age": age,
+            "sex": sex,
+            "symptoms": selected_symptoms
+        })
+        
+        # Render Technical Dashboard
+        st.success("✅ Analysis Complete")
+        
+        pd_data = data["primaryDiagnosis"]
+        st.markdown(f"### 🛑 Primary Diagnosis: {pd_data['name']}")
+        
+        m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+        m_col1.metric("ICD-10 Code", pd_data["icdCode"])
+        m_col2.metric("AI Confidence", f"{pd_data['confidence']}%")
+        m_col3.metric("Severity", pd_data['severity'].upper())
+        m_col4.metric("Category", pd_data["category"])
+        
+        st.progress(pd_data['confidence'] / 100)
+        st.info(f"**Clinical Summary:** {data['clinicalSummary']}")
+        
+        col_left, col_right = st.columns(2)
+        with col_left:
+            st.subheader("⚖️ Differential Diagnoses")
+            st.dataframe(pd.DataFrame(data["differentialDiagnoses"]), use_container_width=True, hide_index=True)
+            st.error("**🚨 Red Flags Identified:**\n- " + "\n- ".join(data["redFlags"]))
+            st.warning("**⚡ Immediate Clinical Actions:**\n- " + "\n- ".join(data["immediateActions"]))
 
-    # 2. Build the Prompt
-    prompt = f"""
-    Patient Profile: Age {age}, Sex: {sex}
-    Clinical Notes: {notes if notes else 'None'}
-    
-    Presenting Symptoms: {', '.join(selected_symptoms) if selected_symptoms else 'None reported'}
-    
-    Vital Signs:
-    {json.dumps(vital_inputs, indent=2)}
-    Abnormal Vitals Flagged: {', '.join(abnormal_vitals) if abnormal_vitals else 'None - All within normal limits'}
-    
-    Provide a comprehensive clinical assessment.
-    """
-
-    with st.spinner("Analyzing patient vector data via Claude 3.5 Sonnet..."):
-        try:
-            client = anthropic.Anthropic(api_key=api_key)
-            response = client.messages.create(
-                model="claude-3-5-sonnet-20241022",
-                max_tokens=1500,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": prompt}]
-            )
+        with col_right:
+            st.subheader("🧪 Recommended Investigations")
+            st.dataframe(pd.DataFrame(data["recommendedTests"]), use_container_width=True, hide_index=True)
+            st.subheader("📊 Risk Factors")
+            st.write(", ".join([f"`{rf}`" for rf in data["riskFactors"]]))
+            st.markdown(f"**Specialist Referral:** {data['specialistReferral']}")
+            st.markdown(f"**Prognosis:** {data['prognosis']}")
             
-            # Extract JSON from response
-            raw_text = response.content[0].text
-            # Clean up potential markdown formatting around the JSON
-            if "```json" in raw_text:
-                raw_text = raw_text.split("```json")[1].split("```")[0]
-            elif "```" in raw_text:
-                raw_text = raw_text.split("```")[1].split("```")[0]
-                
-            data = json.loads(raw_text.strip())
-            
-            # --- Render Technical Dashboard ---
-            st.success("✅ Analysis Complete")
-            
-            # Primary Diagnosis
-            pd_data = data["primaryDiagnosis"]
-            st.markdown(f"### 🛑 Primary Diagnosis: {pd_data['name']}")
-            
-            m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-            m_col1.metric("ICD-10 Code", pd_data.get("icdCode", "N/A"))
-            m_col2.metric("AI Confidence", f"{pd_data['confidence']}%")
-            m_col3.metric("Severity", pd_data['severity'].upper())
-            m_col4.metric("Category", pd_data.get("category", "N/A"))
-            
-            st.progress(pd_data['confidence'] / 100)
-            
-            st.info(f"**Clinical Summary:** {data['clinicalSummary']}")
-            
-            # Two-Column Technical Layout
-            col_left, col_right = st.columns(2)
-            
-            with col_left:
-                st.subheader("⚖️ Differential Diagnoses")
-                diff_df = pd.DataFrame(data["differentialDiagnoses"])
-                st.dataframe(diff_df, use_container_width=True, hide_index=True)
-                
-                if data.get("redFlags"):
-                    st.error("**🚨 Red Flags Identified:**\n- " + "\n- ".join(data["redFlags"]))
-                    
-                if data.get("immediateActions"):
-                    st.warning("**⚡ Immediate Clinical Actions:**\n- " + "\n- ".join(data["immediateActions"]))
-
-            with col_right:
-                st.subheader("🧪 Recommended Investigations")
-                tests_df = pd.DataFrame(data["recommendedTests"])
-                st.dataframe(tests_df, use_container_width=True, hide_index=True)
-                
-                st.subheader("📊 Risk Factors")
-                st.write(", ".join([f"`{rf}`" for rf in data["riskFactors"]]))
-                
-                st.markdown(f"**Specialist Referral:** {data.get('specialistReferral', 'None indicated')}")
-                st.markdown(f"**Prognosis:** {data.get('prognosis', 'Pending further investigation')}")
-                
-            st.caption(f"⚕️ Disclaimer: {data['disclaimer']}")
-
-        except Exception as e:
-            st.error(f"API Error or JSON Parsing Error: {str(e)}")
+        st.caption(f"⚕️ Disclaimer: {data['disclaimer']}")
