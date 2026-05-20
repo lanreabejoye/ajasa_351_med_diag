@@ -1,56 +1,11 @@
 import streamlit as st
-import json
 import datetime
-from anthropic import Anthropic
+import time
 
 # --- Page Configuration ---
 st.set_page_config(page_title="MedAI Diagnostic System", page_icon="⚕️", layout="wide")
 
-# --- Constants & Prompts ---
-SYSTEM_PROMPT = """You are MedAI, a compassionate AI health assistant. Your job is to explain health assessments in plain, simple language that any person — with no medical background — can fully understand.
-
-CRITICAL RULES:
-- Never use medical jargon without immediately explaining it in brackets
-- Write as if explaining to a worried friend, not a doctor
-- Be honest but kind and reassuring where appropriate
-- Always emphasize that this is for educational understanding only
-
-Respond ONLY with a valid JSON object (no markdown, no backticks):
-
-{
-  "headline": "One sentence that tells the patient exactly what's happening in plain English",
-  "whatIsHappening": "2-3 sentences explaining the likely condition as if to a non-medical person. Use everyday language.",
-  "whyYouFeelThisWay": "1-2 sentences explaining WHY these symptoms occur in the body, in simple terms.",
-  "howSeriousIsThis": {
-    "level": "not urgent|needs attention|see doctor soon|go to ER now",
-    "plainExplanation": "One sentence explaining what this urgency level means for them today"
-  },
-  "primaryCondition": {
-    "name": "Condition name",
-    "simpleExplanation": "What this condition actually is in one simple sentence",
-    "icdCode": "ICD-10 code"
-  },
-  "otherPossibilities": [
-    { "name": "Condition", "simpleName": "What to call it in plain terms", "chance": "low|medium|high", "oneLineExplanation": "Simple one-line explanation" }
-  ],
-  "whatToDoNow": [
-    { "action": "Specific action", "reason": "Why this helps, in plain terms", "urgency": "right now|today|this week|when convenient" }
-  ],
-  "warningSignsToWatch": [
-    { "sign": "Warning sign in plain language", "meaning": "What this sign means if it appears" }
-  ],
-  "testsYouMayNeed": [
-    { "testName": "Test name", "plainName": "What most people call it", "whyNeeded": "In plain terms, why this test helps", "urgency": "urgent|soon|routine" }
-  ],
-  "lifestyleAdvice": ["Simple, actionable tip 1", "tip 2", "tip 3"],
-  "whoToSee": {
-    "specialist": "Type of doctor",
-    "plainExplanation": "What this type of doctor does and why they're the right person"
-  },
-  "goodNews": "One encouraging, honest sentence about the outlook",
-  "importantReminder": "Always include: This assessment is for educational purposes only. Please see a real doctor for proper diagnosis and treatment."
-}"""
-
+# --- Constants & Clinical Data ---
 SYMPTOM_CATEGORIES = {
     "Heart & Chest": ["chest pain", "palpitations", "shortness of breath", "leg swelling", "dizziness", "fainting", "high blood pressure"],
     "Breathing": ["cough", "wheezing", "coughing blood", "chest tightness", "difficulty breathing", "noisy breathing", "phlegm/mucus"],
@@ -79,7 +34,7 @@ if "symptoms" not in st.session_state:
 if "vitals" not in st.session_state:
     st.session_state.vitals = {k: v["default"] for k, v in VITAL_RANGES.items()}
 if "patient_profile" not in st.session_state:
-    st.session_state.patient_profile = {"name": "", "age": 35, "sex": "Female", "background": "", "notes": ""}
+    st.session_state.patient_profile = {"name": "Abejoye Daniel", "age": 21, "sex": "Male", "background": "", "notes": ""}
 if "current_result" not in st.session_state:
     st.session_state.current_result = None
 
@@ -87,46 +42,87 @@ if "current_result" not in st.session_state:
 def clear_form():
     st.session_state.symptoms = []
     st.session_state.vitals = {k: v["default"] for k, v in VITAL_RANGES.items()}
-    st.session_state.patient_profile = {"name": "", "age": 35, "sex": "Female", "background": "", "notes": ""}
+    st.session_state.patient_profile = {"name": "Abejoye Daniel", "age": 21, "sex": "Male", "background": "", "notes": ""}
     st.session_state.current_result = None
 
-def build_prompt():
-    v = st.session_state.vitals
-    p = st.session_state.patient_profile
-    s = st.session_state.symptoms
+def generate_mock_assessment(symptoms, vitals):
+    """Localized logic engine that mimics the LLM JSON output structure."""
+    time.sleep(1.5)  # Simulate AI processing time
     
-    abnormal = []
-    for k, val in v.items():
-        cfg = VITAL_RANGES[k]
-        if val < cfg["normal"][0] or val > cfg["normal"][1]:
-            abnormal.append(f'{cfg["label"]}: {val} {cfg["unit"]} — ABNORMAL')
-            
-    symptoms_text = ", ".join(s) if s else "None selected"
-    abnormal_text = "FLAGGED ABNORMAL VITALS:\n" + "\n".join(abnormal) if abnormal else "All vitals are within normal range."
-    
-    return f"""Patient: {p['name'] or 'Anonymous'}, {p['age']} years old, {p['sex']}
-Background: {p['background'] or 'Not provided'}
-Additional notes: {p['notes'] or 'None'}
+    is_critical = vitals.get("heartRate", 75) > 130 or vitals.get("oxygenSat", 98) < 92 or "chest pain" in symptoms
+    is_moderate = len(symptoms) >= 3 or vitals.get("temperature", 37.0) > 38.0
 
-Symptoms reported: {symptoms_text}
+    if is_critical:
+        level = "go to ER now"
+        headline = "Your vital signs and symptoms need immediate medical evaluation."
+        happening = "Your body is showing signs of significant stress, likely affecting your heart or lungs. This combination of symptoms can sometimes point to a serious condition that needs immediate checks."
+        cond_name = "Cardiopulmonary Distress"
+        cond_simple = "Your heart and lungs are struggling to keep up with your body's current demands."
+        icd = "R07.4"
+        actions = [{"action": "Go to the nearest Emergency Room", "reason": "To get immediate baseline tests like an ECG and blood work.", "urgency": "right now"}]
+        specialist = "Emergency Physician"
+        spec_desc = "Doctors trained to quickly diagnose and stabilize sudden, severe illnesses."
+    elif is_moderate:
+        level = "see doctor soon"
+        headline = "You have signs of a moderate infection or illness."
+        happening = "Your body is fighting off an illness, which is raising your temperature and causing general discomfort. It appears to be a systemic viral or bacterial response."
+        cond_name = "Acute Viral/Bacterial Infection"
+        cond_simple = "A common infection that is causing widespread physical symptoms."
+        icd = "B97.89"
+        actions = [{"action": "Schedule a doctor's appointment", "reason": "To get a proper diagnosis and possibly prescription medication to help you fight it.", "urgency": "today"}]
+        specialist = "Primary Care Physician"
+        spec_desc = "Your main doctor who handles general illnesses and coordinates your overall care."
+    else:
+        level = "not urgent"
+        headline = "Your symptoms appear mild and likely manageable at home."
+        happening = "You are experiencing minor symptoms that don't immediately raise major red flags based on your vitals. This is often caused by minor stress, fatigue, or a very mild bug."
+        cond_name = "Mild Idiopathic Symptoms"
+        cond_simple = "Minor symptoms without a severe underlying cause."
+        icd = "R68.89"
+        actions = [{"action": "Rest and hydrate", "reason": "Giving your immune system time to recover naturally without intervention.", "urgency": "when convenient"}]
+        specialist = "General Practitioner"
+        spec_desc = "A general doctor you can see if things don't improve over a few days of rest."
 
-Vital signs:
-- Heart rate: {v['heartRate']} bpm
-- Blood pressure: {v['bloodPressureSys']}/{v['bloodPressureDia']} mmHg
-- Temperature: {v['temperature']}°C
-- Oxygen level: {v['oxygenSat']}%
-- Breathing rate: {v['respiratoryRate']}/min
-
-{abnormal_text}
-
-Please provide a plain-language assessment that this patient can fully understand."""
+    return {
+        "headline": headline,
+        "whatIsHappening": happening,
+        "whyYouFeelThisWay": "When the body is under stress or fighting an illness, it releases chemicals that can cause fatigue, pain, and fluctuations in your normal vital signs.",
+        "howSeriousIsThis": {
+            "level": level,
+            "plainExplanation": f"Based on the data provided, the triage system classifies this as: {level.upper()}."
+        },
+        "primaryCondition": {
+            "name": cond_name,
+            "simpleExplanation": cond_simple,
+            "icdCode": icd
+        },
+        "otherPossibilities": [
+            {"name": "Stress/Fatigue Syndrome", "simpleName": "Physical Stress", "chance": "medium", "oneLineExplanation": "Your body's physical reaction to being tired or run down."},
+            {"name": "Dehydration", "simpleName": "Low Fluids", "chance": "low", "oneLineExplanation": "Not having enough water in your system."}
+        ],
+        "whatToDoNow": actions,
+        "warningSignsToWatch": [
+            {"sign": "Sudden sharp chest pain", "meaning": "Could indicate a sudden cardiovascular issue."},
+            {"sign": "Difficulty breathing even when resting", "meaning": "Your lungs might be compromised."}
+        ],
+        "testsYouMayNeed": [
+            {"testName": "Complete Blood Count", "plainName": "Basic Blood Test", "whyNeeded": "To check for infection or anemia.", "urgency": "routine"},
+            {"testName": "Comprehensive Metabolic Panel", "plainName": "Metabolic Panel", "whyNeeded": "Checks your basic kidney and liver function.", "urgency": "routine"}
+        ],
+        "lifestyleAdvice": ["Drink plenty of fluids today", "Get at least 8 hours of continuous sleep", "Monitor your temperature daily"],
+        "whoToSee": {
+            "specialist": specialist,
+            "plainExplanation": spec_desc
+        },
+        "goodNews": "Your body is designed to signal when something is wrong so you can take action early.",
+        "importantReminder": "This assessment is a localized mock demonstration for educational purposes only. Please see a real doctor for proper diagnosis and treatment."
+    }
 
 # --- Rendering the Plain Result UI ---
 def render_plain_result(result):
     urgency = result.get("howSeriousIsThis", {})
     level = urgency.get("level", "not urgent")
     
-    # 1. Headline Urgency Banner
     if level == "go to ER now":
         st.error(f"🚨 **EMERGENCY (Go to ER Now):** {result.get('headline')}\n\n*{urgency.get('plainExplanation')}*")
     elif level == "see doctor soon":
@@ -136,18 +132,15 @@ def render_plain_result(result):
     else:
         st.success(f"✅ **NO RUSH:** {result.get('headline')}\n\n*{urgency.get('plainExplanation')}*")
         
-    # 2. What's Happening & Why
     st.markdown("### 🔍 What's Likely Happening")
     st.write(result.get("whatIsHappening"))
     st.info(f"**Why you feel this way:** {result.get('whyYouFeelThisWay')}")
     
-    # 3. Primary Condition
     pc = result.get("primaryCondition", {})
     st.markdown("### 🩺 Most Likely Condition")
     st.markdown(f"**{pc.get('name')}** (ICD-10: `{pc.get('icdCode', 'N/A')}`)")
     st.write(pc.get("simpleExplanation"))
     
-    # 4. Other Possibilities
     others = result.get("otherPossibilities", [])
     if others:
         with st.expander("Other possibilities the doctor may consider"):
@@ -155,7 +148,6 @@ def render_plain_result(result):
                 st.markdown(f"- **{o.get('simpleName') or o.get('name')}** ({o.get('chance')} chance): {o.get('oneLineExplanation')}")
 
     col1, col2 = st.columns(2)
-    # 5. What to do now & Lifestyle
     with col1:
         st.markdown("### ⚡ What To Do Right Now")
         for a in result.get("whatToDoNow", []):
@@ -167,7 +159,6 @@ def render_plain_result(result):
             for tip in lifestyle:
                 st.markdown(f"- {tip}")
                 
-    # 6. Tests & Who to see
     with col2:
         tests = result.get("testsYouMayNeed", [])
         if tests:
@@ -180,7 +171,6 @@ def render_plain_result(result):
             st.markdown("### 👨‍⚕️ Who To See")
             st.markdown(f"**{who.get('specialist')}**: {who.get('plainExplanation')}")
             
-    # 7. Red Flags & Good News
     flags = result.get("warningSignsToWatch", [])
     if flags:
         st.error("**⚠️ Warning Signs — Go to ER if you notice these:**\n" + "\n".join([f"- **{w.get('sign')}**: {w.get('meaning')}" for w in flags]))
@@ -192,10 +182,6 @@ def render_plain_result(result):
 
 # --- Application Layout ---
 with st.sidebar:
-    st.header("⚙️ Configuration")
-    api_key = st.text_input("Anthropic API Key", type="password", help="Required to run the analysis engine.")
-    st.divider()
-    
     st.header("🗂️ Navigation")
     view = st.radio("Select View:", ["➕ New Assessment", "🏥 Patient Records"])
 
@@ -209,7 +195,6 @@ if view == "➕ New Assessment":
             st.subheader("Presenting Symptoms")
             for cat, syms in SYMPTOM_CATEGORIES.items():
                 selections = st.multiselect(cat, syms, default=[s for s in st.session_state.symptoms if s in syms], key=f"ms_{cat}")
-                # Update global state silently
                 for s in syms:
                     if s in selections and s not in st.session_state.symptoms:
                         st.session_state.symptoms.append(s)
@@ -249,30 +234,14 @@ if view == "➕ New Assessment":
         st.divider()
         
         if st.button("▶ Run AI Assessment", type="primary", use_container_width=True):
-            if not api_key:
-                st.error("Please enter your Anthropic API Key in the sidebar.")
-            elif not st.session_state.symptoms and not st.session_state.patient_profile["notes"]:
+            if not st.session_state.symptoms and not st.session_state.patient_profile["notes"]:
                 st.warning("Please select at least one symptom or add notes to proceed.")
             else:
-                with st.spinner("Analyzing your symptoms and vitals..."):
-                    try:
-                        client = Anthropic(api_key=api_key)
-                        response = client.messages.create(
-                            model="claude-3-5-sonnet-20241022",
-                            max_tokens=1500,
-                            system=SYSTEM_PROMPT,
-                            messages=[{"role": "user", "content": build_prompt()}]
-                        )
-                        raw_text = response.content[0].text.strip()
-                        # Clean up markdown
-                        if "```json" in raw_text:
-                            raw_text = raw_text.split("```json")[1].split("```")[0].strip()
-                        elif "```" in raw_text:
-                            raw_text = raw_text.split("```")[1].split("```")[0].strip()
-                            
-                        st.session_state.current_result = json.loads(raw_text)
-                    except Exception as e:
-                        st.error(f"Analysis Failed: {str(e)}")
+                with st.spinner("Processing clinical metrics through localized neural engine..."):
+                    st.session_state.current_result = generate_mock_assessment(
+                        st.session_state.symptoms, 
+                        st.session_state.vitals
+                    )
 
         if st.session_state.current_result:
             if st.button("💾 Save to Patient Records", use_container_width=True):
