@@ -34,7 +34,7 @@ if "symptoms" not in st.session_state:
 if "vitals" not in st.session_state:
     st.session_state.vitals = {k: v["default"] for k, v in VITAL_RANGES.items()}
 if "patient_profile" not in st.session_state:
-    st.session_state.patient_profile = {"name": "Abejoye Daniel", "age": 21, "sex": "Male", "background": "", "notes": ""}
+    st.session_state.patient_profile = {"name": "Fasasi Suliamon", "age": 21, "sex": "Male", "background": "", "notes": ""}
 if "current_result" not in st.session_state:
     st.session_state.current_result = None
 
@@ -42,7 +42,7 @@ if "current_result" not in st.session_state:
 def clear_form():
     st.session_state.symptoms = []
     st.session_state.vitals = {k: v["default"] for k, v in VITAL_RANGES.items()}
-    st.session_state.patient_profile = {"name": "Abejoye Daniel", "age": 21, "sex": "Male", "background": "", "notes": ""}
+    st.session_state.patient_profile = {"name": "", "age": 35, "sex": "Female", "background": "", "notes": ""}
     st.session_state.current_result = None
 
 def generate_mock_assessment(symptoms, vitals):
@@ -180,19 +180,52 @@ def render_plain_result(result):
         
     st.caption(f"⚕️ {result.get('importantReminder')}")
 
-# --- Application Layout ---
-with st.sidebar:
-    st.header("🗂️ Navigation")
-    view = st.radio("Select View:", ["➕ New Assessment", "🏥 Patient Records"])
 
-if view == "➕ New Assessment":
-    col_input, col_summary = st.columns([1.5, 1], gap="large")
+# --- Sidebar Dashboard (Persistently Visible) ---
+with st.sidebar:
+    st.title("⚕️ MedAI Dashboard")
+    st.caption("Standalone Clinical Triage Engine")
+    st.divider()
     
+    st.header("🗂️ Patient Credentials")
+    if not st.session_state.patients:
+        st.info("No credentials recorded yet. Run an assessment and save it to build your patient list here.")
+    else:
+        # Loops through all saved patients and displays their credentials directly in the sidebar
+        for i, record in enumerate(st.session_state.patients):
+            panel_title = f"📋 {record['name']} ({record['age']}{record['sex'][0]})"
+            with st.expander(panel_title, expanded=(i==0)):
+                st.write(f"**Medical Bio:** *{record['background'] if record['background'] else 'None provided'}*")
+                st.write(f"**Symptoms:** {', '.join(record['symptoms']) if record['symptoms'] else 'None'}")
+                if record.get("result"):
+                    urgency = record["result"]["howSeriousIsThis"]["level"]
+                    st.markdown(f"**Urgency:** `{urgency.upper()}`")
+                    st.markdown(f"**Diagnosis:** {record['result']['primaryCondition']['name']}")
+                st.caption(f"Saved: {record['savedAt']}")
+
+    st.divider()
+    st.header("🧭 Navigation")
+    view = st.radio("Select Interface:", ["➕ New Assessment", "🏥 Patient Records Database"])
+
+
+# --- Main Application Header (Persistently Visible) ---
+st.title("⚕️ MedAI Diagnostic Assistant")
+st.markdown("**Overview:** A clinical-grade triage system that translates patient symptoms and vitals into structured, plain-language medical assessments. Built for localized, standalone demonstrations.")
+st.divider()
+
+
+# --- Split Views ---
+if view == "➕ New Assessment":
+    st.subheader("New Patient Assessment")
+    st.write("") # Spacer
+
+    col_input, col_summary = st.columns([1.5, 1], gap="large")
+
     with col_input:
         tab_symp, tab_vitals, tab_profile = st.tabs(["🦠 Symptoms", "🫀 Vitals", "📋 Profile"])
         
         with tab_symp:
-            st.subheader("Presenting Symptoms")
+            st.markdown("##### Presenting Symptoms")
             for cat, syms in SYMPTOM_CATEGORIES.items():
                 selections = st.multiselect(cat, syms, default=[s for s in st.session_state.symptoms if s in syms], key=f"ms_{cat}")
                 for s in syms:
@@ -206,7 +239,7 @@ if view == "➕ New Assessment":
                 st.session_state.symptoms.append(custom)
                 
         with tab_vitals:
-            st.subheader("Vital Signs")
+            st.markdown("##### Vital Signs")
             for key, cfg in VITAL_RANGES.items():
                 st.session_state.vitals[key] = st.slider(
                     cfg["label"], 
@@ -216,7 +249,7 @@ if view == "➕ New Assessment":
                 )
                 
         with tab_profile:
-            st.subheader("Demographics & History")
+            st.markdown("##### Demographics & History")
             p1, p2 = st.columns(2)
             st.session_state.patient_profile["name"] = p1.text_input("Patient Name", value=st.session_state.patient_profile["name"], placeholder="Jane Doe")
             st.session_state.patient_profile["age"] = p2.number_input("Age", min_value=1, max_value=120, value=st.session_state.patient_profile["age"])
@@ -257,24 +290,24 @@ if view == "➕ New Assessment":
                     "result": dict(st.session_state.current_result),
                     "savedAt": datetime.datetime.now().strftime("%d %b %Y, %H:%M")
                 }
+                # Add to the top of the list so it appears instantly in the sidebar
                 st.session_state.patients.insert(0, record)
-                st.success("Saved to database!")
+                st.success("Credentials saved to the left dashboard!")
 
         if st.button("🗑️ Clear & Start Over", use_container_width=True):
             clear_form()
             st.rerun()
 
-    # Render Result if present
+    # Render Result if present at the bottom of the main screen
     if st.session_state.current_result:
         st.divider()
         render_plain_result(st.session_state.current_result)
 
 else:
-    # Patient Records View
-    st.header("🏥 Patient Records Database")
+    st.subheader("Manage Saved Patient Records")
     
     if not st.session_state.patients:
-        st.info("No records yet. Run an assessment and save it to start building the database.")
+        st.info("No records yet. Switch to the 'New Assessment' interface to analyze and save patient data.")
     else:
         col_list, col_detail = st.columns([1, 2], gap="large")
         
@@ -293,7 +326,7 @@ else:
         with col_detail:
             selected_record = next((p for p in st.session_state.patients if p["id"] == selected_record_id), None)
             if selected_record:
-                st.subheader(f"📋 {selected_record['name']} ({selected_record['age']}{selected_record['sex'][0]})")
+                st.markdown(f"### 📋 {selected_record['name']} ({selected_record['age']}{selected_record['sex'][0]})")
                 st.caption(f"Recorded at: {selected_record['savedAt']}")
                 if selected_record['symptoms']:
                     st.write(f"**Symptoms:** {', '.join(selected_record['symptoms'])}")
